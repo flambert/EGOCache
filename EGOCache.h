@@ -32,18 +32,25 @@
 	NSMutableDictionary* cacheDictionary;
 	NSOperationQueue* diskOperationQueue;
 	NSTimeInterval defaultTimeoutInterval;
+    NSMutableDictionary *memoryCache;
+    BOOL useMemoryCache;
 }
 
 + (EGOCache*)currentCache;
++ (NSString*)keyForPrefix:(NSString*)prefix url:(NSURL*)url;
++ (NSString*)keyForPrefix:(NSString*)prefix string:(NSString*)string;
 
 - (void)clearCache;
+- (void)clearMemoryCache;
 - (void)removeCacheForKey:(NSString*)key;
 
 - (BOOL)hasCacheForKey:(NSString*)key;
 
 - (NSData*)dataForKey:(NSString*)key;
 - (void)setData:(NSData*)data forKey:(NSString*)key;
+- (void)setData:(NSData*)data forKey:(NSString*)key memoryCachedObject:(id)object;
 - (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+- (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval memoryCachedObject:(id)object;
 
 - (NSString*)stringForKey:(NSString*)key;
 - (void)setString:(NSString*)aString forKey:(NSString*)key;
@@ -59,12 +66,17 @@
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
 #endif
 
-- (NSData*)plistForKey:(NSString*)key;
+- (id)plistForKey:(NSString*)key;
 - (void)setPlist:(id)plistObject forKey:(NSString*)key;
 - (void)setPlist:(id)plistObject forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+
+- (id)objectForKey:(NSString*)key;
+- (void)setObject:(id)object forKey:(NSString*)key;
+- (void)setObject:(id)object forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
 
 - (void)copyFilePath:(NSString*)filePath asKey:(NSString*)key;
 - (void)copyFilePath:(NSString*)filePath asKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;	
 
 @property(nonatomic,assign) NSTimeInterval defaultTimeoutInterval; // Default is 1 day
+@property(nonatomic,assign) BOOL useMemoryCache;
 @end

@@ -34,8 +34,6 @@
 	#define CHECK_FOR_EGOCACHE_PLIST() if([key isEqualToString:@"EGOCache.plist"]) return;
 #endif
 
-
-
 static NSString* _EGOCacheDirectory;
 
 static inline NSString* EGOCacheDirectory() {
@@ -55,28 +53,43 @@ static EGOCache* __instance;
 
 @interface EGOCache ()
 - (void)removeItemFromCache:(NSString*)key;
-- (void)performDiskWriteOperation:(NSInvocation *)invoction;
+- (void)performDiskWriteOperation:(NSInvocation *)invocation;
 - (void)saveCacheDictionary;
+- (id)itemForKey:(NSString*)key readFromDiskWithSelector:(SEL)selector;
 @end
 
 #pragma mark -
 
 @implementation EGOCache
 @synthesize defaultTimeoutInterval;
+@synthesize useMemoryCache;
 
 + (EGOCache*)currentCache {
-	@synchronized(self) {
-		if(!__instance) {
-			__instance = [[EGOCache alloc] init];
-			__instance.defaultTimeoutInterval = 86400;
-		}
-	}
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        __instance = [[EGOCache alloc] init];
+        __instance.defaultTimeoutInterval = 86400;
+        __instance.useMemoryCache = YES;
+    });
 	
 	return __instance;
 }
 
++ (NSString*)keyForPrefix:(NSString*)prefix url:(NSURL*)url {
+    return [EGOCache keyForPrefix:prefix string:[url absoluteString]];
+}
+
++ (NSString*)keyForPrefix:(NSString*)prefix string:(NSString*)string {
+    NSRange schemeRange = [string rangeOfString:@"://"];
+    if (schemeRange.location == NSNotFound || schemeRange.length == 0)
+        schemeRange = NSMakeRange(0, 0);
+    
+    return [NSString stringWithFormat:@"%@/%@", prefix, [[string substringFromIndex:NSMaxRange(schemeRange)] stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+}
+
 - (id)init {
 	if((self = [super init])) {
+        // Load cache dictionary
 		NSDictionary* dict = [NSDictionary dictionaryWithContentsOfFile:cachePathForKey(@"EGOCache.plist")];
 		
 		if([dict isKindOfClass:[NSDictionary class]]) {
@@ -85,13 +98,22 @@ static EGOCache* __instance;
 			cacheDictionary = [[NSMutableDictionary alloc] init];
 		}
 		
+        // Init operation queue
 		diskOperationQueue = [[NSOperationQueue alloc] init];
 		
+        // Init memory cache
+        memoryCache = [[NSMutableDictionary alloc] init];
+        
+        // Handle memory warnings
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
+        
+        // Create the cache directory
 		[[NSFileManager defaultManager] createDirectoryAtPath:EGOCacheDirectory() 
 								  withIntermediateDirectories:YES 
 												   attributes:nil 
 														error:NULL];
 		
+        // Remove expired items from cache
 		for(NSString* key in cacheDictionary) {
 			NSDate* date = [cacheDictionary objectForKey:key];
 			if([[[NSDate date] earlierDate:date] isEqualToDate:date]) {
@@ -109,6 +131,11 @@ static EGOCache* __instance;
 	}
 	
 	[self saveCacheDictionary];
+    [self clearMemoryCache];
+}
+
+- (void)clearMemoryCache {
+    [memoryCache removeAllObjects];
 }
 
 - (void)removeCacheForKey:(NSString*)key {
@@ -128,13 +155,38 @@ static EGOCache* __instance;
 	
 	[self performDiskWriteOperation:deleteInvocation];
 	[cacheDictionary removeObjectForKey:key];
+    [memoryCache removeObjectForKey:key];
 }
 
 - (BOOL)hasCacheForKey:(NSString*)key {
 	NSDate* date = [cacheDictionary objectForKey:key];
 	if(!date) return NO;
 	if([[[NSDate date] earlierDate:date] isEqualToDate:date]) return NO;
+    if([memoryCache objectForKey:key]) return YES;
 	return [[NSFileManager defaultManager] fileExistsAtPath:cachePathForKey(key)];
+}
+
+- (void)handleMemoryWarning:(NSNotification *)notification {
+    if ([notification.name isEqualToString:UIApplicationDidReceiveMemoryWarningNotification]) {
+        [self clearMemoryCache];
+    }
+}
+
+- (id)itemForKey:(NSString *)key readFromDiskWithSelector:(SEL)selector {
+    id item = nil;
+	if([self hasCacheForKey:key]) {
+        if (useMemoryCache) {
+            if((item = [memoryCache objectForKey:key]) == nil) {
+                if((item = [self performSelector:selector withObject:key]) != nil) {
+                    [memoryCache setObject:item forKey:key];
+                }
+            }
+        } else {
+            item = [self performSelector:selector withObject:key];
+        }
+	}
+    
+    return item;
 }
 
 #pragma mark -
@@ -148,16 +200,32 @@ static EGOCache* __instance;
 	[[NSFileManager defaultManager] copyItemAtPath:filePath toPath:cachePathForKey(key) error:NULL];
 	[cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
 	[self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES];
-}																												   
+}
 
 #pragma mark -
 #pragma mark Data methods
 
+- (id)readDataFromDiskForKey:(NSString*)key {
+    return [NSData dataWithContentsOfFile:cachePathForKey(key) options:0 error:NULL];
+}
+
+- (NSData*)dataForKey:(NSString*)key {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readDataFromDiskForKey:)];
+}
+
 - (void)setData:(NSData*)data forKey:(NSString*)key {
-	[self setData:data forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+    [self setData:data forKey:key withTimeoutInterval:self.defaultTimeoutInterval memoryCachedObject:nil];
+}
+
+- (void)setData:(NSData*)data forKey:(NSString*)key memoryCachedObject:(id)object {
+    [self setData:data forKey:key withTimeoutInterval:self.defaultTimeoutInterval memoryCachedObject:object];
 }
 
 - (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
+    [self setData:data forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:nil];
+}
+
+- (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval memoryCachedObject:(id)object {
 	CHECK_FOR_EGOCACHE_PLIST();
 	
 	NSString* cachePath = cachePathForKey(key);
@@ -169,6 +237,10 @@ static EGOCache* __instance;
 	
 	[self performDiskWriteOperation:writeInvocation];
 	[cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
+
+    if (useMemoryCache && object) {
+        [memoryCache setObject:object forKey:key];
+    }
 	
 	[self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
 }
@@ -178,16 +250,12 @@ static EGOCache* __instance;
 	[self performSelector:@selector(saveCacheDictionary) withObject:nil afterDelay:0.3];
 }
 
-- (NSData*)dataForKey:(NSString*)key {
-	if([self hasCacheForKey:key]) {
-		return [NSData dataWithContentsOfFile:cachePathForKey(key) options:0 error:NULL];
-	} else {
-		return nil;
-	}
-}
-
 - (void)writeData:(NSData*)data toPath:(NSString *)path; {
-	[data writeToFile:path atomically:YES];
+    [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] 
+                              withIntermediateDirectories:YES 
+                                               attributes:nil 
+                                                    error:NULL];
+    [data writeToFile:path atomically:YES];
 } 
 
 - (void)deleteDataAtPath:(NSString *)path {
@@ -196,15 +264,21 @@ static EGOCache* __instance;
 
 - (void)saveCacheDictionary {
 	@synchronized(self) {
-		[cacheDictionary writeToFile:cachePathForKey(@"EGOCache.plist") atomically:YES];
+        NSString* path = [cachePathForKey(@"EGOCache.plist") retain];
+		[cacheDictionary writeToFile:path atomically:YES];
+        [path release];
 	}
 }
 
 #pragma mark -
 #pragma mark String methods
 
+- (id)readStringFromDiskForKey:(NSString*)key {
+    return [[[NSString alloc] initWithData:[self dataForKey:key] encoding:NSUTF8StringEncoding] autorelease];
+}
+
 - (NSString*)stringForKey:(NSString*)key {
-	return [[[NSString alloc] initWithData:[self dataForKey:key] encoding:NSUTF8StringEncoding] autorelease];
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readStringFromDiskForKey:)];
 }
 
 - (void)setString:(NSString*)aString forKey:(NSString*)key {
@@ -212,7 +286,7 @@ static EGOCache* __instance;
 }
 
 - (void)setString:(NSString*)aString forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
-	[self setData:[aString dataUsingEncoding:NSUTF8StringEncoding] forKey:key withTimeoutInterval:timeoutInterval];
+	[self setData:[aString dataUsingEncoding:NSUTF8StringEncoding] forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:aString];
 }
 
 #pragma mark -
@@ -220,8 +294,12 @@ static EGOCache* __instance;
 
 #if TARGET_OS_IPHONE
 
+- (id)readImageFromDiskForKey:(NSString*)key {
+    return [UIImage imageWithContentsOfFile:cachePathForKey(key)];
+}
+
 - (UIImage*)imageForKey:(NSString*)key {
-	return [UIImage imageWithContentsOfFile:cachePathForKey(key)];
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readImageFromDiskForKey:)];
 }
 
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key {
@@ -229,14 +307,17 @@ static EGOCache* __instance;
 }
 
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
-	[self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval];
+	[self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:anImage];
 }
-
 
 #else
 
+- (id)readImageFromDiskForKey:(NSString*)key {
+    return [[[NSImage alloc] initWithData:[self dataForKey:key]] autorelease];
+}
+
 - (NSImage*)imageForKey:(NSString*)key {
-	return [[[NSImage alloc] initWithData:[self dataForKey:key]] autorelease];
+    return [self itemFromKey:key readFromDiskWithSelector:@selector(readImageFromDiskForKey:)];
 }
 
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key {
@@ -245,7 +326,7 @@ static EGOCache* __instance;
 
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
 	[self setData:[[[anImage representations] objectAtIndex:0] representationUsingType:NSPNGFileType properties:nil]
-		   forKey:key withTimeoutInterval:timeoutInterval];
+           forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:anImage];
 }
 
 #endif
@@ -253,13 +334,12 @@ static EGOCache* __instance;
 #pragma mark -
 #pragma mark Property List methods
 
+- (id)readPlistFromDiskForKey:(NSString*)key {
+    return [NSPropertyListSerialization propertyListFromData:[self dataForKey:key] mutabilityOption:NSPropertyListImmutable format:nil errorDescription:nil];
+}
+
 - (NSData*)plistForKey:(NSString*)key; {  
-	NSData* plistData = [self dataForKey:key];
-	
-	return [NSPropertyListSerialization propertyListFromData:plistData
-											mutabilityOption:NSPropertyListImmutable
-													  format:nil
-											errorDescription:nil];
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readPlistFromDiskForKey:)];
 }
 
 - (void)setPlist:(id)plistObject forKey:(NSString*)key; {
@@ -272,14 +352,34 @@ static EGOCache* __instance;
 																   format:NSPropertyListBinaryFormat_v1_0
 														 errorDescription:NULL];
 	
-	[self setData:plistData forKey:key withTimeoutInterval:timeoutInterval];
+	[self setData:plistData forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:plistObject];
 }
+
+#pragma mark -
+#pragma mark Objects methods
+
+- (id)readObjectFromDiskForKey:(NSString*)key {
+    return [NSKeyedUnarchiver unarchiveObjectWithData:[self dataForKey:key]];
+}
+
+- (id)objectForKey:(NSString*)key {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readObjectFromDiskForKey:)];
+}
+
+- (void)setObject:(id)object forKey:(NSString*)key {
+	[self setObject:object forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+}   
+
+- (void)setObject:(id)object forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
+    [self setData:[NSKeyedArchiver archivedDataWithRootObject:object] forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:object];
+}
+
 
 #pragma mark -
 #pragma mark Disk writing operations
 
-- (void)performDiskWriteOperation:(NSInvocation *)invoction {
-	NSInvocationOperation *operation = [[NSInvocationOperation alloc] initWithInvocation:invoction];
+- (void)performDiskWriteOperation:(NSInvocation *)invocation {
+	NSInvocationOperation *operation = [[NSInvocationOperation alloc] initWithInvocation:invocation];
 	[diskOperationQueue addOperation:operation];
 	[operation release];
 }
@@ -287,6 +387,8 @@ static EGOCache* __instance;
 #pragma mark -
 
 - (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
+    [memoryCache release];
 	[diskOperationQueue release];
 	[cacheDictionary release];
 	[super dealloc];
