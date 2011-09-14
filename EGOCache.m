@@ -54,7 +54,7 @@ static EGOCache* __instance;
 @interface EGOCache ()
 - (void)removeItemFromCache:(NSString*)key;
 - (void)performDiskWriteOperation:(NSInvocation *)invocation;
-- (void)saveCacheDictionary;
+- (void)saveAfterDelay;
 - (id)itemForKey:(NSString*)key readFromDiskWithSelector:(SEL)selector;
 @end
 
@@ -126,44 +126,58 @@ static EGOCache* __instance;
 }
 
 - (void)clearCache {
-	for(NSString* key in [cacheDictionary allKeys]) {
-		[self removeItemFromCache:key];
-	}
-	
-	[self saveCacheDictionary];
-    [self clearMemoryCache];
+    @synchronized(self) {
+        for(NSString* key in [cacheDictionary allKeys]) {
+            [self removeItemFromCache:key];
+        }
+
+        [memoryCache removeAllObjects];
+    }
+    
+    [self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
 }
 
 - (void)clearMemoryCache {
-    [memoryCache removeAllObjects];
+    @synchronized(self) {
+        [memoryCache removeAllObjects];
+    }
 }
 
 - (void)removeCacheForKey:(NSString*)key {
 	CHECK_FOR_EGOCACHE_PLIST();
-
-	[self removeItemFromCache:key];
-	[self saveCacheDictionary];
+    
+    @synchronized(self) {
+        [self removeItemFromCache:key];
+    }
+    
+    [self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
 }
 
 - (void)removeItemFromCache:(NSString*)key {
-	NSString* cachePath = cachePathForKey(key);
-	
-	NSInvocation* deleteInvocation = [NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(deleteDataAtPath:)]];
-	[deleteInvocation setTarget:self];
-	[deleteInvocation setSelector:@selector(deleteDataAtPath:)];
-	[deleteInvocation setArgument:&cachePath atIndex:2];
-	
-	[self performDiskWriteOperation:deleteInvocation];
-	[cacheDictionary removeObjectForKey:key];
+    NSString* cachePath = cachePathForKey(key);
+    
+    NSInvocation* deleteInvocation = [NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(deleteDataAtPath:)]];
+    [deleteInvocation setTarget:self];
+    [deleteInvocation setSelector:@selector(deleteDataAtPath:)];
+    [deleteInvocation setArgument:&cachePath atIndex:2];
+    
+    [self performDiskWriteOperation:deleteInvocation];
+    [cacheDictionary removeObjectForKey:key];
     [memoryCache removeObjectForKey:key];
 }
 
-- (BOOL)hasCacheForKey:(NSString*)key {
-	NSDate* date = [cacheDictionary objectForKey:key];
-	if(!date) return NO;
-	if([[[NSDate date] earlierDate:date] isEqualToDate:date]) return NO;
+- (BOOL)nonAtomicHasCacheForKey:(NSString*)key {
+    NSDate* date = [cacheDictionary objectForKey:key];
+    if(!date) return NO;
+    if([[[NSDate date] earlierDate:date] isEqualToDate:date]) return NO;
     if([memoryCache objectForKey:key]) return YES;
-	return [[NSFileManager defaultManager] fileExistsAtPath:cachePathForKey(key)];
+    return [[NSFileManager defaultManager] fileExistsAtPath:cachePathForKey(key)];
+}
+
+- (BOOL)hasCacheForKey:(NSString*)key {
+    @synchronized(self) {
+        return [self nonAtomicHasCacheForKey:key];
+    }
 }
 
 - (void)handleMemoryWarning:(NSNotification *)notification {
@@ -173,20 +187,22 @@ static EGOCache* __instance;
 }
 
 - (id)itemForKey:(NSString *)key readFromDiskWithSelector:(SEL)selector {
-    id item = nil;
-	if([self hasCacheForKey:key]) {
-        if (useMemoryCache) {
-            if((item = [memoryCache objectForKey:key]) == nil) {
-                if((item = [self performSelector:selector withObject:key]) != nil) {
-                    [memoryCache setObject:item forKey:key];
+    @synchronized(self) {
+        id item = nil;
+        if([self nonAtomicHasCacheForKey:key]) {
+            if (useMemoryCache) {
+                if((item = [memoryCache objectForKey:key]) == nil) {
+                    if((item = [self performSelector:selector withObject:key]) != nil) {
+                        [memoryCache setObject:item forKey:key];
+                    }
                 }
+            } else {
+                item = [self performSelector:selector withObject:key];
             }
-        } else {
-            item = [self performSelector:selector withObject:key];
         }
-	}
-    
-    return item;
+        
+        return item;
+    }
 }
 
 #pragma mark -
@@ -197,9 +213,12 @@ static EGOCache* __instance;
 }
 
 - (void)copyFilePath:(NSString*)filePath asKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
-	[[NSFileManager defaultManager] copyItemAtPath:filePath toPath:cachePathForKey(key) error:NULL];
-	[cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
-	[self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES];
+    @synchronized(self) {
+        [[NSFileManager defaultManager] copyItemAtPath:filePath toPath:cachePathForKey(key) error:NULL];
+        [cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
+    }
+    
+    [self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
 }
 
 #pragma mark -
@@ -228,21 +247,29 @@ static EGOCache* __instance;
 - (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval memoryCachedObject:(id)object {
 	CHECK_FOR_EGOCACHE_PLIST();
 	
-	NSString* cachePath = cachePathForKey(key);
-	NSInvocation* writeInvocation = [NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(writeData:toPath:)]];
-	[writeInvocation setTarget:self];
-	[writeInvocation setSelector:@selector(writeData:toPath:)];
-	[writeInvocation setArgument:&data atIndex:2];
-	[writeInvocation setArgument:&cachePath atIndex:3];
-	
-	[self performDiskWriteOperation:writeInvocation];
-	[cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
-
-    if (useMemoryCache && object) {
-        [memoryCache setObject:object forKey:key];
+    @synchronized(self) {
+        NSString* cachePath = cachePathForKey(key);
+        NSInvocation* writeInvocation = [NSInvocation invocationWithMethodSignature:[self methodSignatureForSelector:@selector(writeData:toPath:)]];
+        [writeInvocation setTarget:self];
+        [writeInvocation setSelector:@selector(writeData:toPath:)];
+        [writeInvocation setArgument:&data atIndex:2];
+        [writeInvocation setArgument:&cachePath atIndex:3];
+        
+        [self performDiskWriteOperation:writeInvocation];
+        [cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
+        
+        if (useMemoryCache && object) {
+            [memoryCache setObject:object forKey:key];
+        }
     }
-	
-	[self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
+    
+    [self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
+}
+
+- (void)saveCacheDictionary {
+	@synchronized(self) {
+		[cacheDictionary writeToFile:cachePathForKey(@"EGOCache.plist") atomically:YES];
+	}
 }
 
 - (void)saveAfterDelay { // Prevents multiple-rapid saves from happening, which will slow down your app
@@ -260,14 +287,6 @@ static EGOCache* __instance;
 
 - (void)deleteDataAtPath:(NSString *)path {
 	[[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
-}
-
-- (void)saveCacheDictionary {
-	@synchronized(self) {
-        NSString* path = [cachePathForKey(@"EGOCache.plist") retain];
-		[cacheDictionary writeToFile:path atomically:YES];
-        [path release];
-	}
 }
 
 #pragma mark -
