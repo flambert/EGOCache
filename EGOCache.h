@@ -33,7 +33,7 @@
 	NSOperationQueue* diskOperationQueue;
 	NSTimeInterval defaultTimeoutInterval;
     NSMutableDictionary *memoryCache;
-    BOOL useMemoryCache;
+    BOOL defaultUseMemoryCache;
 }
 
 + (EGOCache*)currentCache;
@@ -47,36 +47,52 @@
 - (BOOL)hasCacheForKey:(NSString*)key;
 
 - (NSData*)dataForKey:(NSString*)key;
+- (NSData*)dataForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setData:(NSData*)data forKey:(NSString*)key;
 - (void)setData:(NSData*)data forKey:(NSString*)key memoryCachedObject:(id)object;
 - (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
 - (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval memoryCachedObject:(id)object;
 
 - (NSString*)stringForKey:(NSString*)key;
+- (NSString*)stringForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setString:(NSString*)aString forKey:(NSString*)key;
+- (void)setString:(NSString*)aString forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setString:(NSString*)aString forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+- (void)setString:(NSString*)aString forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache;
 
 #if TARGET_OS_IPHONE
 - (UIImage*)imageForKey:(NSString*)key;
+- (UIImage*)imageForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key;
+- (void)setImage:(UIImage*)anImage forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+- (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache;
 #else
-- (NSImage*)imageForKey:(NSString*)key;
+- (NSImage*)imageForKey:(NSString*)key
+- (NSImage*)imageForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key;
+- (void)setImage:(NSImage*)anImage forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+- (void)setImage:(NSImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache;
 #endif
 
 - (id)plistForKey:(NSString*)key;
+- (id)plistForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setPlist:(id)plistObject forKey:(NSString*)key;
+- (void)setPlist:(id)plistObject forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setPlist:(id)plistObject forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+- (void)setPlist:(id)plistObject forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache;
 
 - (id)objectForKey:(NSString*)key;
+- (id)objectForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setObject:(id)object forKey:(NSString*)key;
+- (void)setObject:(id)object forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache;
 - (void)setObject:(id)object forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;
+- (void)setObject:(id)object forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache;
 
 - (void)copyFilePath:(NSString*)filePath asKey:(NSString*)key;
 - (void)copyFilePath:(NSString*)filePath asKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval;	
 
-@property(nonatomic,assign) NSTimeInterval defaultTimeoutInterval; // Default is 1 day
-@property(nonatomic,assign) BOOL useMemoryCache;
+@property(nonatomic,assign) NSTimeInterval defaultTimeoutInterval;  // Default is 1 day
+@property(nonatomic,assign) BOOL defaultUseMemoryCache;             // Default is YES
 @end

@@ -55,21 +55,21 @@ static EGOCache* __instance;
 - (void)removeItemFromCache:(NSString*)key;
 - (void)performDiskWriteOperation:(NSInvocation *)invocation;
 - (void)saveAfterDelay;
-- (id)itemForKey:(NSString*)key readFromDiskWithSelector:(SEL)selector;
+- (id)itemForKey:(NSString*)key readFromDiskWithSelector:(SEL)selector useMemoryCache:(BOOL)useMemoryCache;
 @end
 
 #pragma mark -
 
 @implementation EGOCache
 @synthesize defaultTimeoutInterval;
-@synthesize useMemoryCache;
+@synthesize defaultUseMemoryCache;
 
 + (EGOCache*)currentCache {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         __instance = [[EGOCache alloc] init];
         __instance.defaultTimeoutInterval = 86400;
-        __instance.useMemoryCache = YES;
+        __instance.defaultUseMemoryCache = YES;
     });
 	
 	return __instance;
@@ -139,6 +139,7 @@ static EGOCache* __instance;
 
 - (void)clearMemoryCache {
     @synchronized(self) {
+        //NSLog(@"clearMemoryCache: %@", memoryCache);
         [memoryCache removeAllObjects];
     }
 }
@@ -186,18 +187,18 @@ static EGOCache* __instance;
     }
 }
 
-- (id)itemForKey:(NSString *)key readFromDiskWithSelector:(SEL)selector {
+- (id)itemForKey:(NSString *)key readFromDiskWithSelector:(SEL)selector useMemoryCache:(BOOL)useMemoryCache {
     @synchronized(self) {
         id item = nil;
         if([self nonAtomicHasCacheForKey:key]) {
             if (useMemoryCache) {
                 if((item = [memoryCache objectForKey:key]) == nil) {
-                    if((item = [self performSelector:selector withObject:key]) != nil) {
+                    if((item = [self performSelector:selector withObject:key withObject:[NSNumber numberWithBool:useMemoryCache]]) != nil) {
                         [memoryCache setObject:item forKey:key];
                     }
                 }
             } else {
-                item = [self performSelector:selector withObject:key];
+                item = [self performSelector:selector withObject:key withObject:[NSNumber numberWithBool:useMemoryCache]];
             }
         }
         
@@ -224,12 +225,16 @@ static EGOCache* __instance;
 #pragma mark -
 #pragma mark Data methods
 
-- (id)readDataFromDiskForKey:(NSString*)key {
+- (id)readDataFromDiskForKey:(NSString*)key useMemoryCache:(NSNumber*)useMemoryCache {
     return [NSData dataWithContentsOfFile:cachePathForKey(key) options:0 error:NULL];
 }
 
 - (NSData*)dataForKey:(NSString*)key {
-    return [self itemForKey:key readFromDiskWithSelector:@selector(readDataFromDiskForKey:)];
+    return [self dataForKey:key useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (NSData*)dataForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readDataFromDiskForKey:useMemoryCache:) useMemoryCache:useMemoryCache];
 }
 
 - (void)setData:(NSData*)data forKey:(NSString*)key {
@@ -244,7 +249,7 @@ static EGOCache* __instance;
     [self setData:data forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:nil];
 }
 
-- (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval memoryCachedObject:(id)object {
+- (void)setData:(NSData*)data forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval memoryCachedObject:(id)memoryCachedObject {
 	CHECK_FOR_EGOCACHE_PLIST();
 	
     @synchronized(self) {
@@ -258,8 +263,8 @@ static EGOCache* __instance;
         [self performDiskWriteOperation:writeInvocation];
         [cacheDictionary setObject:[NSDate dateWithTimeIntervalSinceNow:timeoutInterval] forKey:key];
         
-        if (useMemoryCache && object) {
-            [memoryCache setObject:object forKey:key];
+        if (memoryCachedObject) {
+            [memoryCache setObject:memoryCachedObject forKey:key];
         }
     }
     
@@ -277,7 +282,7 @@ static EGOCache* __instance;
 	[self performSelector:@selector(saveCacheDictionary) withObject:nil afterDelay:0.3];
 }
 
-- (void)writeData:(NSData*)data toPath:(NSString *)path; {
+- (void)writeData:(NSData*)data toPath:(NSString *)path {
     [[NSFileManager defaultManager] createDirectoryAtPath:[path stringByDeletingLastPathComponent] 
                               withIntermediateDirectories:YES 
                                                attributes:nil 
@@ -292,20 +297,32 @@ static EGOCache* __instance;
 #pragma mark -
 #pragma mark String methods
 
-- (id)readStringFromDiskForKey:(NSString*)key {
+- (id)readStringFromDiskForKey:(NSString*)key useMemoryCache:(NSNumber*)useMemoryCache {
     return [[[NSString alloc] initWithData:[self dataForKey:key] encoding:NSUTF8StringEncoding] autorelease];
 }
 
 - (NSString*)stringForKey:(NSString*)key {
-    return [self itemForKey:key readFromDiskWithSelector:@selector(readStringFromDiskForKey:)];
+    return [self stringForKey:key useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (NSString*)stringForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readStringFromDiskForKey:useMemoryCache:) useMemoryCache:useMemoryCache];
 }
 
 - (void)setString:(NSString*)aString forKey:(NSString*)key {
-	[self setString:aString forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+	[self setString:aString forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setString:(NSString*)aString forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+	[self setString:aString forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:useMemoryCache];
 }
 
 - (void)setString:(NSString*)aString forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
-	[self setData:[aString dataUsingEncoding:NSUTF8StringEncoding] forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:aString];
+    [self setString:aString forKey:key withTimeoutInterval:timeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setString:(NSString*)aString forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
+	[self setData:[aString dataUsingEncoding:NSUTF8StringEncoding] forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? aString : nil)];
 }
 
 #pragma mark -
@@ -313,39 +330,63 @@ static EGOCache* __instance;
 
 #if TARGET_OS_IPHONE
 
-- (id)readImageFromDiskForKey:(NSString*)key {
+- (id)readImageFromDiskForKey:(NSString*)key useMemoryCache:(NSNumber*)useMemoryCache {
     return [UIImage imageWithContentsOfFile:cachePathForKey(key)];
 }
 
 - (UIImage*)imageForKey:(NSString*)key {
-    return [self itemForKey:key readFromDiskWithSelector:@selector(readImageFromDiskForKey:)];
+    return [self imageForKey:key useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (UIImage*)imageForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readImageFromDiskForKey:useMemoryCache:) useMemoryCache:useMemoryCache];
 }
 
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key {
-	[self setImage:anImage forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+	[self setImage:anImage forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setImage:(UIImage*)anImage forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+	[self setImage:anImage forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:useMemoryCache];
 }
 
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
-	[self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:anImage];
+	[self setImage:anImage forKey:key withTimeoutInterval:timeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
+	[self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
 }
 
 #else
 
-- (id)readImageFromDiskForKey:(NSString*)key {
+- (id)readImageFromDiskForKey:(NSString*)key useMemoryCache:(NSNumber*)useMemoryCache {
     return [[[NSImage alloc] initWithData:[self dataForKey:key]] autorelease];
 }
 
 - (NSImage*)imageForKey:(NSString*)key {
-    return [self itemFromKey:key readFromDiskWithSelector:@selector(readImageFromDiskForKey:)];
+    return [self imageForKey:key useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (NSImage*)imageForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+    return [self itemFromKey:key readFromDiskWithSelector:@selector(readImageFromDiskForKey:useMemoryCache) useMemoryCache:useMemoryCache];
 }
 
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key {
-	[self setImage:anImage forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+	[self setImage:anImage forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setImage:(NSImage*)anImage forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+	[self setImage:anImage forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:useMemoryCache];
 }
 
 - (void)setImage:(NSImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
+	[self setImage:anImage forKey:key withTimeoutInterval:timeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setImage:(NSImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
 	[self setData:[[[anImage representations] objectAtIndex:0] representationUsingType:NSPNGFileType properties:nil]
-           forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:anImage];
+           forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage: nil)];
 }
 
 #endif
@@ -353,46 +394,69 @@ static EGOCache* __instance;
 #pragma mark -
 #pragma mark Property List methods
 
-- (id)readPlistFromDiskForKey:(NSString*)key {
+- (id)readPlistFromDiskForKey:(NSString*)key useMemoryCache:(NSNumber*)useMemoryCache {
     return [NSPropertyListSerialization propertyListFromData:[self dataForKey:key] mutabilityOption:NSPropertyListImmutable format:nil errorDescription:nil];
 }
 
-- (NSData*)plistForKey:(NSString*)key; {  
-    return [self itemForKey:key readFromDiskWithSelector:@selector(readPlistFromDiskForKey:)];
+- (NSData*)plistForKey:(NSString*)key {
+    return [self plistForKey:key useMemoryCache:self.defaultUseMemoryCache];
 }
 
-- (void)setPlist:(id)plistObject forKey:(NSString*)key; {
-	[self setPlist:plistObject forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+- (NSData*)plistForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readPlistFromDiskForKey:useMemoryCache:) useMemoryCache:useMemoryCache];
 }
 
-- (void)setPlist:(id)plistObject forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval; {
+- (void)setPlist:(id)plistObject forKey:(NSString*)key {
+	[self setPlist:plistObject forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setPlist:(id)plistObject forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+	[self setPlist:plistObject forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:useMemoryCache];
+}
+
+- (void)setPlist:(id)plistObject forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
+	[self setPlist:plistObject forKey:key withTimeoutInterval:timeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (void)setPlist:(id)plistObject forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
 	// Binary plists are used over XML for better performance
 	NSData* plistData = [NSPropertyListSerialization dataFromPropertyList:plistObject 
 																   format:NSPropertyListBinaryFormat_v1_0
 														 errorDescription:NULL];
 	
-	[self setData:plistData forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:plistObject];
+	[self setData:plistData forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? plistObject : nil)];
 }
 
 #pragma mark -
 #pragma mark Objects methods
 
-- (id)readObjectFromDiskForKey:(NSString*)key {
-    return [NSKeyedUnarchiver unarchiveObjectWithData:[self dataForKey:key]];
+- (id)readObjectFromDiskForKey:(NSString*)key useMemoryCache:(NSNumber*)useMemoryCache {
+    return [NSKeyedUnarchiver unarchiveObjectWithData:[self dataForKey:key useMemoryCache:[useMemoryCache boolValue]]];
 }
 
 - (id)objectForKey:(NSString*)key {
-    return [self itemForKey:key readFromDiskWithSelector:@selector(readObjectFromDiskForKey:)];
+    return [self objectForKey:key useMemoryCache:self.defaultUseMemoryCache];
+}
+
+- (id)objectForKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+    return [self itemForKey:key readFromDiskWithSelector:@selector(readObjectFromDiskForKey:useMemoryCache:) useMemoryCache:useMemoryCache];
 }
 
 - (void)setObject:(id)object forKey:(NSString*)key {
-	[self setObject:object forKey:key withTimeoutInterval:self.defaultTimeoutInterval];
+	[self setObject:object forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:self.defaultUseMemoryCache];
+}   
+
+- (void)setObject:(id)object forKey:(NSString*)key useMemoryCache:(BOOL)useMemoryCache {
+	[self setObject:object forKey:key withTimeoutInterval:self.defaultTimeoutInterval useMemoryCache:useMemoryCache];
 }   
 
 - (void)setObject:(id)object forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval {
-    [self setData:[NSKeyedArchiver archivedDataWithRootObject:object] forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:object];
+	[self setObject:object forKey:key withTimeoutInterval:timeoutInterval useMemoryCache:self.defaultUseMemoryCache];
 }
 
+- (void)setObject:(id)object forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
+    [self setData:[NSKeyedArchiver archivedDataWithRootObject:object] forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? object : nil)];
+}
 
 #pragma mark -
 #pragma mark Disk writing operations
