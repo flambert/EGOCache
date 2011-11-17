@@ -50,6 +50,7 @@
 - (void)clearCache;
 - (void)clearMemoryCache;
 - (void)removeCacheForKey:(NSString*)key;
+- (void)removeMemoryCacheForKey:(NSString*)key;
 
 - (BOOL)hasCacheForKey:(NSString*)key;
 - (BOOL)hasCacheForKey:(NSString*)key checkOnlyMemory:(BOOL) memoryOnly;

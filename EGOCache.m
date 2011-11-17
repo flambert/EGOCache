@@ -159,6 +159,12 @@ static EGOCache* __instance;
     [self performSelectorOnMainThread:@selector(saveAfterDelay) withObject:nil waitUntilDone:YES]; // Need to make sure the save delay get scheduled in the main runloop, not the current threads
 }
 
+- (void)removeMemoryCacheForKey:(NSString *)key {
+    @synchronized(self) {
+        [memoryCache removeObjectForKey:key];
+    }
+}
+
 - (void)removeItemFromCache:(NSString*)key {
     NSString* cachePath = cachePathForKey(key);
     
