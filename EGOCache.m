@@ -381,7 +381,12 @@ static EGOCache* __instance;
 }
 
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
-	[self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
+    if ([key rangeOfString:@".jpg"].location != NSNotFound || 
+        [key rangeOfString:@".jpeg"].location != NSNotFound) {
+        [self setData:UIImageJPEGRepresentation(anImage, 0.6) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
+    } else {
+        [self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
+    }
 }
 
 #else
