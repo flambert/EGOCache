@@ -172,17 +172,29 @@ static EGOCache* __instance;
     [memoryCache removeObjectForKey:key];
 }
 
-- (BOOL)nonAtomicHasCacheForKey:(NSString*)key {
+- (BOOL)nonAtomicHasCacheForKey:(NSString*)key checkOnlyMemory:(BOOL)checkOnlyMemory{
     NSDate* date = [cacheDictionary objectForKey:key];
     if(!date) return NO;
     if([[[NSDate date] earlierDate:date] isEqualToDate:date]) return NO;
     if([memoryCache objectForKey:key]) return YES;
-    return [[NSFileManager defaultManager] fileExistsAtPath:cachePathForKey(key)];
+    if (!checkOnlyMemory) {
+        return [[NSFileManager defaultManager] fileExistsAtPath:cachePathForKey(key)];
+    } else {
+        return NO;
+    }
+}
+
+- (BOOL)nonAtomicHasCacheForKey:(NSString*)key {
+    return [self nonAtomicHasCacheForKey:key checkOnlyMemory:NO];
 }
 
 - (BOOL)hasCacheForKey:(NSString*)key {
+    return [self hasCacheForKey:key checkOnlyMemory:NO];
+}
+
+- (BOOL)hasCacheForKey:(NSString*)key checkOnlyMemory:(BOOL)checkOnlyMemory {
     @synchronized(self) {
-        return [self nonAtomicHasCacheForKey:key];
+        return [self nonAtomicHasCacheForKey:key checkOnlyMemory:checkOnlyMemory];
     }
 }
 
