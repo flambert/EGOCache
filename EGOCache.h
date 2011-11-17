@@ -26,13 +26,20 @@
 
 #import <Foundation/Foundation.h>
 
+#ifndef EGO_CACHE_USE_NS_CACHE
+#define EGO_CACHE_USE_NS_CACHE 1
+#endif
 
 @interface EGOCache : NSObject {
 @private
 	NSMutableDictionary* cacheDictionary;
 	NSOperationQueue* diskOperationQueue;
 	NSTimeInterval defaultTimeoutInterval;
+#if EGO_CACHE_USE_NS_CACHE
+    NSCache *memoryCache;
+#else
     NSMutableDictionary *memoryCache;
+#endif
     BOOL defaultUseMemoryCache;
 }
 

@@ -102,10 +102,15 @@ static EGOCache* __instance;
 		diskOperationQueue = [[NSOperationQueue alloc] init];
 		
         // Init memory cache
+#if EGO_CACHE_USE_NS_CACHE
+        memoryCache = [[NSCache alloc] init];
+        memoryCache.name = @"EGOCache";
+#else
         memoryCache = [[NSMutableDictionary alloc] init];
         
         // Handle memory warnings
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleMemoryWarning:) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
+#endif
         
         // Create the cache directory
 		[[NSFileManager defaultManager] createDirectoryAtPath:EGOCacheDirectory() 
@@ -181,11 +186,14 @@ static EGOCache* __instance;
     }
 }
 
+#if EGO_CACHE_USE_NS_CACHE
+#else
 - (void)handleMemoryWarning:(NSNotification *)notification {
     if ([notification.name isEqualToString:UIApplicationDidReceiveMemoryWarningNotification]) {
         [self clearMemoryCache];
     }
 }
+#endif
 
 - (id)itemForKey:(NSString *)key readFromDiskWithSelector:(SEL)selector useMemoryCache:(BOOL)useMemoryCache {
     @synchronized(self) {
@@ -470,7 +478,10 @@ static EGOCache* __instance;
 #pragma mark -
 
 - (void)dealloc {
+#if EGO_CACHE_USE_NS_CACHE
+#else
     [[NSNotificationCenter defaultCenter] removeObserver:self name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
+#endif
     [memoryCache release];
 	[diskOperationQueue release];
 	[cacheDictionary release];
