@@ -56,6 +56,8 @@ static EGOCache* __instance;
 - (void)performDiskWriteOperation:(NSInvocation *)invocation;
 - (void)saveAfterDelay;
 - (id)itemForKey:(NSString*)key readFromDiskWithSelector:(SEL)selector useMemoryCache:(BOOL)useMemoryCache;
+- (void)deleteDataAtPath:(NSString *)path;
+- (void)writeData:(NSData*)data toPath:(NSString *)path;
 @end
 
 #pragma mark -
@@ -383,7 +385,7 @@ static EGOCache* __instance;
 - (void)setImage:(UIImage*)anImage forKey:(NSString*)key withTimeoutInterval:(NSTimeInterval)timeoutInterval useMemoryCache:(BOOL)useMemoryCache {
     if ([key rangeOfString:@".jpg"].location != NSNotFound || 
         [key rangeOfString:@".jpeg"].location != NSNotFound) {
-        [self setData:UIImageJPEGRepresentation(anImage, 0.6) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
+        [self setData:UIImageJPEGRepresentation(anImage, 0.6f) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
     } else {
         [self setData:UIImagePNGRepresentation(anImage) forKey:key withTimeoutInterval:timeoutInterval memoryCachedObject:(useMemoryCache ? anImage : nil)];
     }
