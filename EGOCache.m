@@ -34,13 +34,13 @@
 	#define CHECK_FOR_EGOCACHE_PLIST() if([key isEqualToString:@"EGOCache.plist"]) return;
 #endif
 
-static NSString* _EGOCacheDirectory;
-
 static inline NSString* EGOCacheDirectory() {
-	if(!_EGOCacheDirectory) {
+    static NSString* _EGOCacheDirectory;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
 		NSString* cachesDirectory = [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES) objectAtIndex:0];
 		_EGOCacheDirectory = [[[cachesDirectory stringByAppendingPathComponent:[[NSProcessInfo processInfo] processName]] stringByAppendingPathComponent:@"EGOCache"] copy];
-	}
+    });
 	
 	return _EGOCacheDirectory;
 }
@@ -48,8 +48,6 @@ static inline NSString* EGOCacheDirectory() {
 static inline NSString* cachePathForKey(NSString* key) {
 	return [EGOCacheDirectory() stringByAppendingPathComponent:key];
 }
-
-static EGOCache* __instance;
 
 @interface EGOCache ()
 - (void)removeItemFromCache:(NSString*)key;
@@ -67,6 +65,7 @@ static EGOCache* __instance;
 @synthesize defaultUseMemoryCache;
 
 + (EGOCache*)currentCache {
+    static EGOCache* __instance;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         __instance = [[EGOCache alloc] init];
